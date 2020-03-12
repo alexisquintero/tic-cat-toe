@@ -5,16 +5,44 @@ import cats.effect.concurrent.Ref
 
 object Main extends IOApp {
 
+  implicit val showChar: Show[Char] =
+    Show.show { c =>
+      c.toString
+    }
+
   def run(args: List[String]): IO[ExitCode] =
     for {
-      board <- Ref.of[IO, Vector[Vector[Char]]](Vector[Vector[Char]](
-                 Vector('q', 'w', 'e'),
-                 Vector('a', 'b', 'd'),
-                 Vector('z', 'x', 'c')))
-      _ <- Game.showBoard[IO](board)
-      x <- Game.humanAction[IO]
-      y <- Game.cpuAction[IO]
+      board <- IO(Board(List('q', 'w', 'e', 'a', 'b', 'd', 'z', 'x', 'c')))
+      Game  <- Ref.of[IO, Board[Char]](board)
+      // _     <- Game.showBoard[IO](board)
+      // x     <- Game.humanAction[IO]
+      // y     <- Game.cpuAction[IO]
     } yield (ExitCode.Success)
+}
+
+trait Position
+
+case object TopLeft      extends Position
+case object TopMiddle    extends Position
+case object TopRight     extends Position
+case object MiddleLeft   extends Position
+case object MiddleMiddle extends Position
+case object MiddleRight  extends Position
+case object BottomLeft   extends Position
+case object BottomMiddle extends Position
+case object BottomRight  extends Position
+
+case class Board[A: Show](positions: Map[Position, A]) {
+}
+
+case object Board {
+
+  def apply[A: Show](initialValues: List[A]): Board[A] = {
+    val allPositions: List[Position] =
+      List(TopLeft, TopMiddle, TopRight, MiddleLeft, MiddleMiddle, MiddleRight, BottomLeft, BottomMiddle, BottomRight)
+    val m: Map[Position, A] = (allPositions zip initialValues).toMap
+    Board(m)
+  }
 }
 
 case object Game {
@@ -41,20 +69,4 @@ case object Game {
       _ <- Sync[F].delay(println("My move: "))
       _ <- Sync[F].delay(println("move"))
     } yield ()
-}
-
-case class Cell[F[_]]() {
-
-  val value: Option[Char] = None
-
-  implicit val showCell: Show[Cell[F]] =
-    Show.show { cell =>
-      val i: Char = cell.value.getOrElse(' ')
-      s"""+---+
-          || $i |
-          |+---+""".stripMargin
-    }
-
-  def show(): String =
-    Show[Cell[F]].show(this)
 }
