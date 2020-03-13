@@ -1,25 +1,30 @@
-import cats.Show
+import cats.{ Show, Eq }
 
 import cats.effect.{ IO, IOApp, ExitCode, Sync }
 import cats.effect.concurrent.Ref
 
 object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
+  import cats.instances.char.catsKernelStdOrderForChar
 
   def run(args: List[String]): IO[ExitCode] =
     for {
-      initialValues <- IO(List('q', 'w', 'e', 'a', 'b', 'd', 'z', 'x', 'c'))
-      userSymbol    <- IO('x')
-      board <- IO(Board(initialValues))
+      emptySymbol <- IO(' ')
+      userSymbol  <- IO('x')
+      cpuSymbol   <- IO('o')
+      board <- IO(Board(emptySymbol))
       _     <- IO(println(s"Posible positions: ${Position.showAllPositions}"))
       game  <- Game.newGame[IO, Char](board)
-      _     <- Game.gameLoop[IO, Char](board, userSymbol)
+      _     <- Game.gameLoop[IO, Char](board, userSymbol, cpuSymbol, emptySymbol)
     } yield (ExitCode.Success)
 }
 trait Position
 
 object Position {
   import cats.syntax.option._
+  import cats.Foldable
+  import cats.instances.list._
+  import cats.instances.string._
 
   val rows: List[List[Position]] =
     List(
@@ -45,7 +50,7 @@ object Position {
     List(TopLeft, TopMiddle, TopRight, MiddleLeft, MiddleMiddle, MiddleRight, BottomLeft, BottomMiddle, BottomRight)
 
   def showAllPositions(): String =
-    allPositions.map(_.toString).reduce((acc, cur) => s"$acc, $cur")
+    Foldable[List].intercalate(allPositions.map(_.toString), ", ")
 
   def fromString(s: String): Option[Position] =
     s.toLowerCase match {
@@ -101,11 +106,9 @@ case class Board[A: Show](positions: Map[Position, A]) {
 }
 
 case object Board {
-  //TODO: Better checking initial values when different than 9 elements
-  def apply[A: Show](initialValues: List[A]): Board[A] = {
-    val m: Map[Position, A] = (Position.allPositions zip initialValues).toMap
-    Board(m)
-  }
+  def apply[A: Show](emptySymbol: A): Board[A] =
+    Board(
+      (Position.allPositions zip List.fill(Position.allPositions.size)(emptySymbol)).toMap)
 }
 
 case object Game {
@@ -136,28 +139,29 @@ case object Game {
       } yield newBoard
 
   // TODO: pick empty non game terminating place, else defeat
-  def cpuAction[F[_]: Sync](): F[Unit] =
+  def cpuAction[F[_]: Sync, A](board: Board[A], cpuA: A): F[Unit] =
     for {
       _ <- Sync[F].delay(println("My move: "))
       _ <- Sync[F].delay(println("move"))
     } yield ()
 
-  def endCondition[F[_]: Sync, A](board: Board[A]): F[Boolean] = {
+  def endCondition[F[_]: Sync, A: Eq](board: Board[A], emptySymbol: A): F[Boolean] = {
     import cats.instances.int._
     import cats.syntax.eq._
 
     val pathVals: List[List[Option[A]]] = Position.allPaths.map(path => path.map(board.positions.get))
-    val pathSetSize: List[Int] = pathVals.map(pathVal => pathVal.flatten.toSet.size)
-    Sync[F].pure(pathSetSize.exists(_ === 1))
+    val pathSet: List[Set[A]] = pathVals.map(pathVal => pathVal.flatten.toSet)
+    val nonEmptyPathSize: List[Int] = pathSet.filter(_.exists(_ =!= emptySymbol)).map(_.size)
+    Sync[F].pure(nonEmptyPathSize.exists(_ === 1))
   }
 
-  def gameLoop[F[_]: Sync, A](board: Board[A], playerA: A): F[Unit] =
+  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], playerA: A, cpuA: A, emptySymbol: A): F[Unit] =
     for {
       _          <- Game.showBoard[F, A](board)
       humanBoard <- Game.humanAction[F, A](board, playerA)
-      // y <- Game.cpuAction[F]
-      end        <- Game.endCondition(humanBoard)
+      cpuBoard   <- Game.cpuAction[F, A](humanBoard, cpuA)
+      end        <- Game.endCondition(humanBoard, emptySymbol)
       _          <- if (end) Sync[F].unit
-                    else gameLoop(humanBoard, playerA)
+                    else gameLoop(humanBoard, playerA, cpuA, emptySymbol)
     } yield ()
 }
