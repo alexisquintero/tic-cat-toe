@@ -4,22 +4,42 @@ import cats.effect.{ IO, IOApp, ExitCode, Sync }
 import cats.effect.concurrent.Ref
 
 object Main extends IOApp {
-  import cats.instances.char._
+  import cats.instances.char.catsStdShowForChar
 
   def run(args: List[String]): IO[ExitCode] =
     for {
       initialValues <- IO(List('q', 'w', 'e', 'a', 'b', 'd', 'z', 'x', 'c'))
+      userSymbol    <- IO('x')
       board <- IO(Board(initialValues))
       _     <- IO(println(s"Posible positions: ${Position.showAllPositions}"))
       game  <- Game.newGame[IO, Char](board)
-      _     <- Game.gameLoop[IO, Char](board, 'x')
+      _     <- Game.gameLoop[IO, Char](board, userSymbol)
     } yield (ExitCode.Success)
 }
-
 trait Position
 
 object Position {
   import cats.syntax.option._
+
+  val rows: List[List[Position]] =
+    List(
+      List(TopLeft, TopMiddle, TopRight),
+      List(MiddleLeft, MiddleMiddle, MiddleRight),
+      List(BottomLeft, BottomMiddle, BottomRight))
+
+  val columns: List[List[Position]] =
+    List(
+      List(TopLeft, MiddleLeft, BottomLeft),
+      List(TopMiddle, MiddleMiddle, BottomMiddle),
+      List(TopRight, MiddleRight, BottomRight))
+
+  val diagonals: List[List[Position]] =
+    List(
+      List(TopLeft, MiddleMiddle, BottomRight),
+      List(TopRight, MiddleMiddle, BottomLeft))
+
+  val allPaths: List[List[Position]] =
+    (rows ++ columns ++ diagonals)
 
   val allPositions: List[Position] =
     List(TopLeft, TopMiddle, TopRight, MiddleLeft, MiddleMiddle, MiddleRight, BottomLeft, BottomMiddle, BottomRight)
@@ -100,31 +120,44 @@ case object Game {
   def showBoard[F[_]: Sync, A](board: Board[A]): F[Unit] =
     Sync[F].delay(println(board.show))
 
+  //TODO: Better error handling, raiseError and handleErrorWith?
+  //TODO: Handle exiting
   def humanAction[F[_]: Sync, A](board: Board[A], playerA: A): F[Board[A]] =
       for {
-        _        <- Sync[F].delay(println("Your move: "))
+        _        <- Sync[F].delay(print("Your move: "))
         ans      <- Sync[F].delay(StdIn.readLine)
         posObj   =  Position.fromString(ans)
         newBoard <- posObj match {
                       case None => for {
                         _ <- Sync[F].delay(println("Invalid position"))
-                        _ <- humanAction(board, playerA)
                       } yield board
                       case Some(position) => Sync[F].delay(board.move(position, playerA))
                     }
       } yield newBoard
 
+  // TODO: pick empty non game terminating place, else defeat
   def cpuAction[F[_]: Sync](): F[Unit] =
     for {
       _ <- Sync[F].delay(println("My move: "))
       _ <- Sync[F].delay(println("move"))
     } yield ()
 
+  def endCondition[F[_]: Sync, A](board: Board[A]): F[Boolean] = {
+    import cats.instances.int._
+    import cats.syntax.eq._
+
+    val pathVals: List[List[Option[A]]] = Position.allPaths.map(path => path.map(board.positions.get))
+    val pathSetSize: List[Int] = pathVals.map(pathVal => pathVal.flatten.toSet.size)
+    Sync[F].pure(pathSetSize.exists(_ === 1))
+  }
+
   def gameLoop[F[_]: Sync, A](board: Board[A], playerA: A): F[Unit] =
     for {
       _          <- Game.showBoard[F, A](board)
       humanBoard <- Game.humanAction[F, A](board, playerA)
       // y <- Game.cpuAction[F]
-      _          <- gameLoop(humanBoard, playerA)
+      end        <- Game.endCondition(humanBoard)
+      _          <- if (end) Sync[F].unit
+                    else gameLoop(humanBoard, playerA)
     } yield ()
 }
