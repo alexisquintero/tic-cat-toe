@@ -1,7 +1,6 @@
 import cats.{ Show, Eq }
 
 import cats.effect.{ IO, IOApp, ExitCode, Sync }
-import cats.effect.concurrent.Semaphore
 
 object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
@@ -9,12 +8,13 @@ object Main extends IOApp {
 
   val symbols: Symbols[Char] = Symbols('x', 'o', ' ')
 
+  val player: Player = Human
+
   def run(args: List[String]): IO[ExitCode] =
     for {
       board <- IO(Board(symbols))
       _     <- IO(println(s"Posible positions: ${Position.showAllPositions}"))
-      s     <- Semaphore[IO](1)
-      _     <- Game.gameLoop[IO, Char](board, s)
+      _     <- Game.gameLoop[IO, Char](board, player)
     } yield (ExitCode.Success)
 }
 
@@ -125,6 +125,11 @@ case object Board {
       symbols)
 }
 
+trait Player
+
+case object Human extends Player
+case object Cpu   extends Player
+
 case object Game {
   import scala.io.StdIn
 
@@ -166,7 +171,7 @@ case object Game {
       } yield newBoard
 
   // TODO: check if can win else pick empty non game terminating place else defeat
-  def cpuAction[F[_]: Sync, A: Eq](board: Board[A], semaphore: Semaphore[F]): F[Board[A]] = {
+  def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] = {
     val positionResult: List[(Position, Boolean, Board[A])] =
       for {
         position <- Position.allPositions
@@ -193,13 +198,24 @@ case object Game {
     nonEmptyPathSize.exists(_ === 1)
   }
 
-  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], semaphore: Semaphore[F]): F[Unit] =
+  def moveLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Board[A]] =
+    player match {
+      case Human => Game.humanAction[F, A](board)
+      case Cpu   => Game.cpuAction[F, A](board)
+    }
+
+  def changePlayer(player: Player): Player =
+    player match {
+      case Cpu   => Human
+      case Human => Cpu
+    }
+
+  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Unit] =
     for {
       _          <- Game.showBoard[F, A](board)
-      humanBoard <- Game.humanAction[F, A](board)
-      cpuBoard   <- Game.cpuAction[F, A](humanBoard, semaphore)
-      end        =  Game.endCondition(cpuBoard)
-      _          <- if (end) Game.showBoard[F, A](cpuBoard)
-                    else gameLoop(cpuBoard, semaphore)
+      newBoard   <- moveLoop[F, A](board, player)
+      end        =  Game.endCondition(newBoard)
+      _          <- if (end) Game.showBoard[F, A](newBoard)
+                    else gameLoop(newBoard, changePlayer(player))
     } yield ()
 }
