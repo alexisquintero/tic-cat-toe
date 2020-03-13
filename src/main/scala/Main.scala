@@ -1,7 +1,7 @@
 import cats.{ Show, Eq }
 
 import cats.effect.{ IO, IOApp, ExitCode, Sync }
-import cats.effect.concurrent.Ref
+import cats.effect.concurrent.{ Ref, Semaphore }
 
 object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
@@ -15,7 +15,8 @@ object Main extends IOApp {
       board <- IO(Board(emptySymbol))
       _     <- IO(println(s"Posible positions: ${Position.showAllPositions}"))
       game  <- Game.newGame[IO, Char](board)
-      _     <- Game.gameLoop[IO, Char](board, userSymbol, cpuSymbol, emptySymbol)
+      s     <- Semaphore[IO](1)
+      _     <- Game.gameLoop[IO, Char](board, userSymbol, cpuSymbol, emptySymbol, s)
     } yield (ExitCode.Success)
 }
 trait Position
@@ -138,30 +139,39 @@ case object Game {
                     }
       } yield newBoard
 
-  // TODO: pick empty non game terminating place, else defeat
-  def cpuAction[F[_]: Sync, A](board: Board[A], cpuA: A): F[Unit] =
-    for {
-      _ <- Sync[F].delay(println("My move: "))
-      _ <- Sync[F].delay(println("move"))
-    } yield ()
+  // TODO: check if can win else pick empty non game terminating place else defeat
+  def cpuAction[F[_]: Sync, A: Eq](board: Board[A], cpuA: A, emptySymbol: A, semaphore: Semaphore[F]): F[Board[A]] = {
+    val positionResult =
+      Position.allPositions.map{ position =>
+        val end: Boolean = endCondition[A](board.move(position, cpuA), emptySymbol)
+        (position -> end)
+      }
 
-  def endCondition[F[_]: Sync, A: Eq](board: Board[A], emptySymbol: A): F[Boolean] = {
+    val validPositions: List[Position] =
+      positionResult.filter{ case (position, result) => !result }.map(_._1)
+
+    println(s"\nvalidPositions: ${validPositions.head} \n")
+
+    Sync[F].pure(board.move(validPositions.head, cpuA))
+  }
+
+  def endCondition[A: Eq](board: Board[A], emptySymbol: A): Boolean = {
     import cats.instances.int._
     import cats.syntax.eq._
 
     val pathVals: List[List[Option[A]]] = Position.allPaths.map(path => path.map(board.positions.get))
     val pathSet: List[Set[A]] = pathVals.map(pathVal => pathVal.flatten.toSet)
     val nonEmptyPathSize: List[Int] = pathSet.filter(_.exists(_ =!= emptySymbol)).map(_.size)
-    Sync[F].pure(nonEmptyPathSize.exists(_ === 1))
+    nonEmptyPathSize.exists(_ === 1)
   }
 
-  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], playerA: A, cpuA: A, emptySymbol: A): F[Unit] =
+  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], playerA: A, cpuA: A, emptySymbol: A, semaphore: Semaphore[F]): F[Unit] =
     for {
       _          <- Game.showBoard[F, A](board)
       humanBoard <- Game.humanAction[F, A](board, playerA)
-      cpuBoard   <- Game.cpuAction[F, A](humanBoard, cpuA)
-      end        <- Game.endCondition(humanBoard, emptySymbol)
+      cpuBoard   <- Game.cpuAction[F, A](humanBoard, cpuA, emptySymbol, semaphore)
+      end        =  Game.endCondition(cpuBoard, emptySymbol)
       _          <- if (end) Sync[F].unit
-                    else gameLoop(humanBoard, playerA, cpuA, emptySymbol)
+                    else gameLoop(cpuBoard, playerA, cpuA, emptySymbol, semaphore)
     } yield ()
 }
