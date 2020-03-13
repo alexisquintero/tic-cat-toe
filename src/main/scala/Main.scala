@@ -1,7 +1,7 @@
 import cats.{ Show, Eq }
 
 import cats.effect.{ IO, IOApp, ExitCode, Sync }
-import cats.effect.concurrent.{ Ref, Semaphore }
+import cats.effect.concurrent.Semaphore
 
 object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
@@ -14,7 +14,6 @@ object Main extends IOApp {
       cpuSymbol   <- IO('o')
       board <- IO(Board(emptySymbol))
       _     <- IO(println(s"Posible positions: ${Position.showAllPositions}"))
-      game  <- Game.newGame[IO, Char](board)
       s     <- Semaphore[IO](1)
       _     <- Game.gameLoop[IO, Char](board, userSymbol, cpuSymbol, emptySymbol, s)
     } yield (ExitCode.Success)
@@ -78,7 +77,11 @@ case object BottomLeft   extends Position
 case object BottomMiddle extends Position
 case object BottomRight  extends Position
 
-case class Board[A: Show](positions: Map[Position, A]) {
+trait Error
+
+case object InvalidMove extends Error
+
+case class Board[A: Show: Eq](positions: Map[Position, A]) {
 
   implicit def showBoard(): Show[Board[A]] =
     Show.show { b =>
@@ -102,12 +105,19 @@ case class Board[A: Show](positions: Map[Position, A]) {
     def show(): String =
       Show[Board[A]](showBoard).show(this)
 
-    def move(position: Position, symbol: A): Board[A] =
-      this.copy(positions = this.positions + (position -> symbol))
+    def move(position: Position, symbol: A, empty: A): Either[Error, Board[A]] = {
+      import cats.syntax.eq._
+      import cats.syntax.either._
+
+      if (positions.get(position).map(_ === empty).getOrElse(false))
+        this.copy(positions = this.positions + (position -> symbol)).asRight[Error]
+      else
+        InvalidMove.asLeft[Board[A]]
+    }
 }
 
 case object Board {
-  def apply[A: Show](emptySymbol: A): Board[A] =
+  def apply[A: Show: Eq](emptySymbol: A): Board[A] =
     Board(
       (Position.allPositions zip List.fill(Position.allPositions.size)(emptySymbol)).toMap)
 }
@@ -118,41 +128,56 @@ case object Game {
   import cats.syntax.flatMap._
   import cats.syntax.functor._
 
-  def newGame[F[_]: Sync, A](board: Board[A]): F[Ref[F, Board[A]]] =
-    Ref.of[F, Board[A]](board)
-
   def showBoard[F[_]: Sync, A](board: Board[A]): F[Unit] =
     Sync[F].delay(println(board.show))
 
+  def readPosition[F[_]: Sync](): F[Position] =
+    for {
+      _        <- Sync[F].delay(print("Your move: "))
+      ans      <- Sync[F].delay(StdIn.readLine)
+      posObj   =  Position.fromString(ans)
+      position <- posObj match {
+                    case None => for {
+                      _   <- Sync[F].delay(println("Invalid position"))
+                      pos <- readPosition
+                    } yield pos
+                    case Some(position) => Sync[F].pure(position)
+                  }
+    } yield position
+
   //TODO: Better error handling, raiseError and handleErrorWith?
   //TODO: Handle exiting
-  def humanAction[F[_]: Sync, A](board: Board[A], playerA: A): F[Board[A]] =
+  def humanAction[F[_]: Sync, A](board: Board[A], playerA: A, emptyA: A): F[Board[A]] =
       for {
-        _        <- Sync[F].delay(print("Your move: "))
-        ans      <- Sync[F].delay(StdIn.readLine)
-        posObj   =  Position.fromString(ans)
-        newBoard <- posObj match {
-                      case None => for {
-                        _ <- Sync[F].delay(println("Invalid position"))
-                      } yield board
-                      case Some(position) => Sync[F].delay(board.move(position, playerA))
+        position <- readPosition[F]()
+        move     = board.move(position, playerA, emptyA)
+        newBoard <- move match {
+                      case Left(value) =>
+                        for {
+                          _            <- Sync[F].delay(println(value.toString))
+                          correctBoard <- humanAction(board, playerA, emptyA)
+                        } yield correctBoard
+                      case Right(value) =>
+                        Sync[F].pure(value)
                     }
       } yield newBoard
 
   // TODO: check if can win else pick empty non game terminating place else defeat
   def cpuAction[F[_]: Sync, A: Eq](board: Board[A], cpuA: A, emptySymbol: A, semaphore: Semaphore[F]): F[Board[A]] = {
-    val positionResult =
-      Position.allPositions.map{ position =>
-        val end: Boolean = endCondition[A](board.move(position, cpuA), emptySymbol)
-        (position -> end)
-      }
+    val positionResult: List[(Position, Boolean, Board[A])] =
+      for {
+        position <- Position.allPositions
+        move     = board.move(position, cpuA, emptySymbol)
+        (invalid, newBoard)  = move match {
+                                 case Left(_) => (true, board)
+                                 case Right(moveBoard) => (endCondition(moveBoard, emptySymbol), moveBoard)
+                               }
+      } yield(position, invalid, newBoard)
 
-    val validPositions: List[Position] =
-      positionResult.filter{ case (position, result) => !result }.map(_._1)
+    val validBoard: List[Board[A]] =
+      positionResult.filter{ case (_, result, _) => !result }.map(_._3)
 
-    println(s"\nvalidPositions: ${validPositions.head} \n")
-
-    Sync[F].pure(board.move(validPositions.head, cpuA))
+    Sync[F].pure(validBoard.headOption.getOrElse(board))
   }
 
   def endCondition[A: Eq](board: Board[A], emptySymbol: A): Boolean = {
@@ -168,10 +193,10 @@ case object Game {
   def gameLoop[F[_]: Sync, A: Eq](board: Board[A], playerA: A, cpuA: A, emptySymbol: A, semaphore: Semaphore[F]): F[Unit] =
     for {
       _          <- Game.showBoard[F, A](board)
-      humanBoard <- Game.humanAction[F, A](board, playerA)
+      humanBoard <- Game.humanAction[F, A](board, playerA, emptySymbol)
       cpuBoard   <- Game.cpuAction[F, A](humanBoard, cpuA, emptySymbol, semaphore)
       end        =  Game.endCondition(cpuBoard, emptySymbol)
-      _          <- if (end) Sync[F].unit
+      _          <- if (end) Game.showBoard[F, A](cpuBoard)
                     else gameLoop(cpuBoard, playerA, cpuA, emptySymbol, semaphore)
     } yield ()
 }
