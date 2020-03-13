@@ -7,17 +7,19 @@ object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
   import cats.instances.char.catsKernelStdOrderForChar
 
+  val symbols: Symbols[Char] = Symbols('x', 'o', ' ')
+
   def run(args: List[String]): IO[ExitCode] =
     for {
-      emptySymbol <- IO(' ')
-      userSymbol  <- IO('x')
-      cpuSymbol   <- IO('o')
-      board <- IO(Board(emptySymbol))
+      board <- IO(Board(symbols))
       _     <- IO(println(s"Posible positions: ${Position.showAllPositions}"))
       s     <- Semaphore[IO](1)
-      _     <- Game.gameLoop[IO, Char](board, userSymbol, cpuSymbol, emptySymbol, s)
+      _     <- Game.gameLoop[IO, Char](board, s)
     } yield (ExitCode.Success)
 }
+
+case class Symbols[A](user: A, cpu: A, empty: A)
+
 trait Position
 
 object Position {
@@ -81,7 +83,7 @@ trait Error
 
 case object InvalidMove extends Error
 
-case class Board[A: Show: Eq](positions: Map[Position, A]) {
+case class Board[A: Show: Eq](positions: Map[Position, A], symbols: Symbols[A]) {
 
   implicit def showBoard(): Show[Board[A]] =
     Show.show { b =>
@@ -105,11 +107,11 @@ case class Board[A: Show: Eq](positions: Map[Position, A]) {
     def show(): String =
       Show[Board[A]](showBoard).show(this)
 
-    def move(position: Position, symbol: A, empty: A): Either[Error, Board[A]] = {
+    def move(position: Position, symbol: A): Either[Error, Board[A]] = {
       import cats.syntax.eq._
       import cats.syntax.either._
 
-      if (positions.get(position).map(_ === empty).getOrElse(false))
+      if (positions.get(position).map(_ === symbols.empty).getOrElse(false))
         this.copy(positions = this.positions + (position -> symbol)).asRight[Error]
       else
         InvalidMove.asLeft[Board[A]]
@@ -117,9 +119,10 @@ case class Board[A: Show: Eq](positions: Map[Position, A]) {
 }
 
 case object Board {
-  def apply[A: Show: Eq](emptySymbol: A): Board[A] =
+  def apply[A: Show: Eq](symbols: Symbols[A]): Board[A] =
     Board(
-      (Position.allPositions zip List.fill(Position.allPositions.size)(emptySymbol)).toMap)
+      (Position.allPositions zip List.fill(Position.allPositions.size)(symbols.empty)).toMap,
+      symbols)
 }
 
 case object Game {
@@ -147,15 +150,15 @@ case object Game {
 
   //TODO: Better error handling, raiseError and handleErrorWith?
   //TODO: Handle exiting
-  def humanAction[F[_]: Sync, A](board: Board[A], playerA: A, emptyA: A): F[Board[A]] =
+  def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
       for {
         position <- readPosition[F]()
-        move     = board.move(position, playerA, emptyA)
+        move     = board.move(position, board.symbols.user)
         newBoard <- move match {
                       case Left(value) =>
                         for {
                           _            <- Sync[F].delay(println(value.toString))
-                          correctBoard <- humanAction(board, playerA, emptyA)
+                          correctBoard <- humanAction(board)
                         } yield correctBoard
                       case Right(value) =>
                         Sync[F].pure(value)
@@ -163,14 +166,14 @@ case object Game {
       } yield newBoard
 
   // TODO: check if can win else pick empty non game terminating place else defeat
-  def cpuAction[F[_]: Sync, A: Eq](board: Board[A], cpuA: A, emptySymbol: A, semaphore: Semaphore[F]): F[Board[A]] = {
+  def cpuAction[F[_]: Sync, A: Eq](board: Board[A], semaphore: Semaphore[F]): F[Board[A]] = {
     val positionResult: List[(Position, Boolean, Board[A])] =
       for {
         position <- Position.allPositions
-        move     = board.move(position, cpuA, emptySymbol)
+        move     = board.move(position, board.symbols.cpu)
         (invalid, newBoard)  = move match {
                                  case Left(_) => (true, board)
-                                 case Right(moveBoard) => (endCondition(moveBoard, emptySymbol), moveBoard)
+                                 case Right(moveBoard) => (endCondition(moveBoard), moveBoard)
                                }
       } yield(position, invalid, newBoard)
 
@@ -180,23 +183,23 @@ case object Game {
     Sync[F].pure(validBoard.headOption.getOrElse(board))
   }
 
-  def endCondition[A: Eq](board: Board[A], emptySymbol: A): Boolean = {
+  def endCondition[A: Eq](board: Board[A]): Boolean = {
     import cats.instances.int._
     import cats.syntax.eq._
 
     val pathVals: List[List[Option[A]]] = Position.allPaths.map(path => path.map(board.positions.get))
     val pathSet: List[Set[A]] = pathVals.map(pathVal => pathVal.flatten.toSet)
-    val nonEmptyPathSize: List[Int] = pathSet.filter(_.exists(_ =!= emptySymbol)).map(_.size)
+    val nonEmptyPathSize: List[Int] = pathSet.filter(_.exists(_ =!= board.symbols.empty)).map(_.size)
     nonEmptyPathSize.exists(_ === 1)
   }
 
-  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], playerA: A, cpuA: A, emptySymbol: A, semaphore: Semaphore[F]): F[Unit] =
+  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], semaphore: Semaphore[F]): F[Unit] =
     for {
       _          <- Game.showBoard[F, A](board)
-      humanBoard <- Game.humanAction[F, A](board, playerA, emptySymbol)
-      cpuBoard   <- Game.cpuAction[F, A](humanBoard, cpuA, emptySymbol, semaphore)
-      end        =  Game.endCondition(cpuBoard, emptySymbol)
+      humanBoard <- Game.humanAction[F, A](board)
+      cpuBoard   <- Game.cpuAction[F, A](humanBoard, semaphore)
+      end        =  Game.endCondition(cpuBoard)
       _          <- if (end) Game.showBoard[F, A](cpuBoard)
-                    else gameLoop(cpuBoard, playerA, cpuA, emptySymbol, semaphore)
+                    else gameLoop(cpuBoard, semaphore)
     } yield ()
 }
