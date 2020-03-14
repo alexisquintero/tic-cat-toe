@@ -2,8 +2,6 @@ import cats.{ Show, Eq }
 
 import cats.effect.{ IO, IOApp, ExitCode, Sync }
 
-import scala.reflect.ClassTag
-
 import Positions._
 
 object Main extends IOApp {
@@ -14,8 +12,8 @@ object Main extends IOApp {
   val initialPlayer: Player = Human
   val initialBoard: Board[Char] = Board(symbols)
 
-  // TODO: Fix erasure
-  def errorHandlingLoop[F[_]: Sync, A: Eq: ClassTag](board: Board[A], player: Player): F[Unit] = {
+  // TODO: PlayerIsCoward not patternMatching
+  def errorHandling[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Unit] = {
     import cats.syntax.functor._
     import cats.syntax.flatMap._
     import cats.syntax.applicativeError._
@@ -23,17 +21,16 @@ object Main extends IOApp {
     for {
       _ <- Sync[F].delay(println(s"Posible positions: ${Position.showAllPositions}"))
       _ <- Game.gameLoop[F, A](board, player).handleErrorWith {
-             // case InvalidMove(board: Board[A], player) => errorHandlingLoop[F, A](board, player)
              case PlayerHasNoSymbol => Sync[F].pure(println(PlayerHasNoSymbol.toString))
-             case BoardMissingSymbol => Sync[F].pure(println(BoardMissingSymbol.toString))
-             case _ => Sync[F].delay(println("Catastrophic failure"))
+             case PlayerIsCoward    => Sync[F].pure(println(PlayerIsCoward.toString))
+             case e => Sync[F].delay(println(s"Catastrophic failure: $e"))
            }
     } yield ()
   }
 
   def run(args: List[String]): IO[ExitCode] =
     for {
-      _ <- errorHandlingLoop[IO, Char](initialBoard, initialPlayer)
+      _ <- errorHandling[IO, Char](initialBoard, initialPlayer)
     } yield (ExitCode.Success)
 }
 
@@ -45,10 +42,13 @@ object Symbols {
 }
 
 trait Error extends Throwable
+trait FatalError extends Error
+trait BoardError extends Error
 
-case class  InvalidMove[A](board: Board[A], player: Player) extends Error
-case object PlayerHasNoSymbol extends Error
-case object BoardMissingSymbol extends Error
+case object InvalidMove extends BoardError
+
+case object PlayerHasNoSymbol extends FatalError
+case object PlayerIsCoward    extends FatalError
 
 case class Board[A: Show: Eq](positions: Map[Position, A], symbols: Symbols[A]) {
   import cats.syntax.eq._
@@ -87,7 +87,7 @@ case class Board[A: Show: Eq](positions: Map[Position, A], symbols: Symbols[A]) 
                   }
         empty = positions.get(position).map(_ === symbols.empty).getOrElse(false)
         newBoard <- if (empty) Sync[F].pure(this.copy(positions = this.positions + (position -> symbol)))
-                    else Sync[F].raiseError(InvalidMove(this, player))
+                    else Sync[F].raiseError(InvalidMove)
       } yield newBoard
     }
 
@@ -114,28 +114,34 @@ case object Game {
   import cats.syntax.functor._
   import cats.syntax.applicativeError._
 
-  // TODO: raiseError and handleErrorWith?
-  def readPosition[F[_]: Sync](): F[Position] =
+  def checkCoward[F[_]: Sync, S: Eq](input: S, endValue: S): F[Unit] = {
+    import cats.syntax.eq._
+
+    if (input === endValue) Sync[F].raiseError(PlayerIsCoward)
+    else Sync[F].unit
+  }
+
+  def inputToPosition[F[_]: Sync](input: String): F[Position] =
+      Position.fromString(input) match {
+        case None => Sync[F].raiseError(InvalidMove)
+        case Some(position) => Sync[F].pure(position)
+      }
+
+  def readPosition[F[_]: Sync](): F[Position] = {
+    import cats.syntax.apply._
+    import cats.instances.string.catsKernelStdOrderForString
+
     for {
       _        <- Sync[F].delay(print("Your move: "))
-      ans      <- Sync[F].delay(StdIn.readLine)
-      posObj   =  Position.fromString(ans)
-      position <- posObj match {
-                    case None => for {
-                      _   <- Sync[F].delay(println("Invalid position"))
-                      pos <- readPosition
-                    } yield pos
-                    case Some(position) => Sync[F].pure(position)
-                  }
+      input    <- Sync[F].delay(StdIn.readLine.toLowerCase)
+      position <- checkCoward(input, "exit") *> inputToPosition(input)
     } yield position
+  }
 
-  //TODO: Handle exiting
   def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
       for {
         position <- readPosition[F]()
-        newBoard <- board.move(position, Human).handleErrorWith {
-                      case InvalidMove(_, _) => humanAction[F, A](board)
-                    }
+        newBoard <- board.move(position, Human)
       } yield newBoard
 
   // TODO: check if can win else pick empty non game terminating place else defeat
@@ -174,12 +180,22 @@ case object Game {
       _ <- Sync[F].delay(println(board.show))
     } yield ()
 
-  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Unit] =
-    for {
-      _          <- Sync[F].delay(println(board.show))
-      newBoard   <- moveLoop[F, A](board, player)
-      end        =  endCondition(newBoard)
-      _          <- if (end) showWinner[F, A](newBoard, player)
-                    else gameLoop(newBoard, changePlayer(player))
-    } yield ()
+  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Unit] = {
+    val game: F[Unit] =
+      for {
+        _          <- Sync[F].delay(println(board.show))
+        newBoard   <- moveLoop[F, A](board, player)
+        end        =  endCondition(newBoard)
+        _          <- if (end) showWinner[F, A](newBoard, player)
+                      else gameLoop(newBoard, changePlayer(player))
+      } yield ()
+
+    game.handleErrorWith {
+      case InvalidMove =>
+        for {
+          _ <- Sync[F].delay(println("Invalid move"))
+          _ <- gameLoop(board, player)
+        } yield ()
+    }
+  }
 }
