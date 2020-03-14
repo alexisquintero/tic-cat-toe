@@ -3,6 +3,7 @@ import cats.{ Show, Eq }
 import cats.effect.{ IO, IOApp, ExitCode, Sync }
 
 import Positions._
+import Errors._
 
 object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
@@ -40,15 +41,6 @@ object Symbols {
   def apply[A](user: A, cpu: A, empty: A): Symbols[A] =
     Symbols(Map[Player, A](Human -> user, Cpu -> cpu), empty)
 }
-
-trait Error extends Throwable
-trait FatalError extends Error
-trait BoardError extends Error
-
-case object InvalidMove extends BoardError
-
-case object PlayerHasNoSymbol extends FatalError
-case object PlayerIsCoward    extends FatalError
 
 case class Board[A: Show: Eq](positions: Map[Position, A], symbols: Symbols[A]) {
   import cats.syntax.eq._
