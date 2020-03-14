@@ -79,11 +79,12 @@ case object BottomLeft   extends Position
 case object BottomMiddle extends Position
 case object BottomRight  extends Position
 
-trait Error
+trait Error extends Throwable
 
 case object InvalidMove extends Error
 
 case class Board[A: Show: Eq](positions: Map[Position, A], symbols: Symbols[A]) {
+  import cats.syntax.eq._
 
   implicit def showBoard(): Show[Board[A]] =
     Show.show { b =>
@@ -107,15 +108,17 @@ case class Board[A: Show: Eq](positions: Map[Position, A], symbols: Symbols[A]) 
     def show(): String =
       Show[Board[A]](showBoard).show(this)
 
-    def move(position: Position, symbol: A): Either[Error, Board[A]] = {
+    def move[F[_]: Sync](position: Position, symbol: A): F[Board[A]] = {
       import cats.syntax.eq._
-      import cats.syntax.either._
 
       if (positions.get(position).map(_ === symbols.empty).getOrElse(false))
-        this.copy(positions = this.positions + (position -> symbol)).asRight[Error]
+        Sync[F].pure(this.copy(positions = this.positions + (position -> symbol)))
       else
-        InvalidMove.asLeft[Board[A]]
+        Sync[F].raiseError(InvalidMove)
     }
+
+    def validPositions: List[Position] =
+      positions.filter(_._2 === symbols.empty).keys.toList
 }
 
 case object Board {
@@ -136,9 +139,7 @@ case object Game {
   import cats.syntax.flatMap._
   import cats.syntax.functor._
 
-  def showBoard[F[_]: Sync, A](board: Board[A]): F[Unit] =
-    Sync[F].delay(println(board.show))
-
+  // TODO: raiseError and handleErrorWith?
   def readPosition[F[_]: Sync](): F[Position] =
     for {
       _        <- Sync[F].delay(print("Your move: "))
@@ -153,41 +154,22 @@ case object Game {
                   }
     } yield position
 
-  //TODO: Better error handling, raiseError and handleErrorWith?
+  //TODO: handleErrorWith
   //TODO: Handle exiting
   def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
       for {
         position <- readPosition[F]()
-        move     = board.move(position, board.symbols.user)
-        newBoard <- move match {
-                      case Left(value) =>
-                        for {
-                          _            <- Sync[F].delay(println(value.toString))
-                          correctBoard <- humanAction(board)
-                        } yield correctBoard
-                      case Right(value) =>
-                        Sync[F].pure(value)
-                    }
+        newBoard <- board.move(position, board.symbols.user)
       } yield newBoard
 
   // TODO: check if can win else pick empty non game terminating place else defeat
-  def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] = {
-    val positionResult: List[(Position, Boolean, Board[A])] =
-      for {
-        position <- Position.allPositions
-        move     = board.move(position, board.symbols.cpu)
-        (invalid, newBoard)  = move match {
-                                 case Left(_) => (true, board)
-                                 case Right(moveBoard) => (endCondition(moveBoard), moveBoard)
-                               }
-      } yield(position, invalid, newBoard)
+  def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
+    for {
+      _        <- Sync[F].delay(println("Cpu move"))
+      newBoard <- board.move(board.validPositions.head, board.symbols.cpu)
+    } yield newBoard
 
-    val validBoard: List[Board[A]] =
-      positionResult.filter{ case (_, result, _) => !result }.map(_._3)
-
-    Sync[F].pure(validBoard.headOption.getOrElse(board))
-  }
-
+  // How can this be so ugly?
   def endCondition[A: Eq](board: Board[A]): Boolean = {
     import cats.instances.int._
     import cats.syntax.eq._
@@ -210,12 +192,18 @@ case object Game {
       case Human => Cpu
     }
 
+  def showWinner[F[_]: Sync, A](board: Board[A], player: Player): F[Unit] =
+    for {
+      _ <- Sync[F].delay(println(s"Winner: ${player.toString}"))
+      _ <- Sync[F].delay(println(board.show))
+    } yield ()
+
   def gameLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Unit] =
     for {
-      _          <- Game.showBoard[F, A](board)
+      _          <- Sync[F].delay(println(board.show))
       newBoard   <- moveLoop[F, A](board, player)
-      end        =  Game.endCondition(newBoard)
-      _          <- if (end) Game.showBoard[F, A](newBoard)
+      end        =  endCondition(newBoard)
+      _          <- if (end) showWinner[F, A](newBoard, player)
                     else gameLoop(newBoard, changePlayer(player))
     } yield ()
 }
