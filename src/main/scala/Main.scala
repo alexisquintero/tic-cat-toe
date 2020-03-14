@@ -2,86 +2,53 @@ import cats.{ Show, Eq }
 
 import cats.effect.{ IO, IOApp, ExitCode, Sync }
 
+import scala.reflect.ClassTag
+
+import Positions._
+
 object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
   import cats.instances.char.catsKernelStdOrderForChar
 
   val symbols: Symbols[Char] = Symbols('x', 'o', ' ')
+  val initialPlayer: Player = Human
+  val initialBoard: Board[Char] = Board(symbols)
 
-  val player: Player = Human
+  // TODO: Fix erasure
+  def errorHandlingLoop[F[_]: Sync, A: Eq: ClassTag](board: Board[A], player: Player): F[Unit] = {
+    import cats.syntax.functor._
+    import cats.syntax.flatMap._
+    import cats.syntax.applicativeError._
+
+    for {
+      _ <- Sync[F].delay(println(s"Posible positions: ${Position.showAllPositions}"))
+      _ <- Game.gameLoop[F, A](board, player).handleErrorWith {
+             // case InvalidMove(board: Board[A], player) => errorHandlingLoop[F, A](board, player)
+             case PlayerHasNoSymbol => Sync[F].pure(println(PlayerHasNoSymbol.toString))
+             case BoardMissingSymbol => Sync[F].pure(println(BoardMissingSymbol.toString))
+             case _ => Sync[F].delay(println("Catastrophic failure"))
+           }
+    } yield ()
+  }
 
   def run(args: List[String]): IO[ExitCode] =
     for {
-      board <- IO(Board(symbols))
-      _     <- IO(println(s"Posible positions: ${Position.showAllPositions}"))
-      _     <- Game.gameLoop[IO, Char](board, player)
+      _ <- errorHandlingLoop[IO, Char](initialBoard, initialPlayer)
     } yield (ExitCode.Success)
 }
 
-case class Symbols[A](user: A, cpu: A, empty: A)
+case class Symbols[A](playerSymbols: Map[Player, A], empty: A)
 
-trait Position
-
-object Position {
-  import cats.syntax.option._
-  import cats.Foldable
-  import cats.instances.list._
-  import cats.instances.string._
-
-  val rows: List[List[Position]] =
-    List(
-      List(TopLeft, TopMiddle, TopRight),
-      List(MiddleLeft, MiddleMiddle, MiddleRight),
-      List(BottomLeft, BottomMiddle, BottomRight))
-
-  val columns: List[List[Position]] =
-    List(
-      List(TopLeft, MiddleLeft, BottomLeft),
-      List(TopMiddle, MiddleMiddle, BottomMiddle),
-      List(TopRight, MiddleRight, BottomRight))
-
-  val diagonals: List[List[Position]] =
-    List(
-      List(TopLeft, MiddleMiddle, BottomRight),
-      List(TopRight, MiddleMiddle, BottomLeft))
-
-  val allPaths: List[List[Position]] =
-    (rows ++ columns ++ diagonals)
-
-  val allPositions: List[Position] =
-    List(TopLeft, TopMiddle, TopRight, MiddleLeft, MiddleMiddle, MiddleRight, BottomLeft, BottomMiddle, BottomRight)
-
-  def showAllPositions(): String =
-    Foldable[List].intercalate(allPositions.map(_.toString), ", ")
-
-  def fromString(s: String): Option[Position] =
-    s.toLowerCase match {
-      case "topleft"      => TopLeft.some
-      case "topmiddle"    => TopMiddle.some
-      case "topright"     => TopRight.some
-      case "middleleft"   => MiddleLeft.some
-      case "middlemiddle" => MiddleMiddle.some
-      case "middleright"  => MiddleRight.some
-      case "bottomleft"   => BottomLeft.some
-      case "bottommiddle" => BottomMiddle.some
-      case "bottomright"  => BottomRight.some
-      case _              => none
-    }
+object Symbols {
+  def apply[A](user: A, cpu: A, empty: A): Symbols[A] =
+    Symbols(Map[Player, A](Human -> user, Cpu -> cpu), empty)
 }
-
-case object TopLeft      extends Position
-case object TopMiddle    extends Position
-case object TopRight     extends Position
-case object MiddleLeft   extends Position
-case object MiddleMiddle extends Position
-case object MiddleRight  extends Position
-case object BottomLeft   extends Position
-case object BottomMiddle extends Position
-case object BottomRight  extends Position
 
 trait Error extends Throwable
 
-case object InvalidMove extends Error
+case class  InvalidMove[A](board: Board[A], player: Player) extends Error
+case object PlayerHasNoSymbol extends Error
+case object BoardMissingSymbol extends Error
 
 case class Board[A: Show: Eq](positions: Map[Position, A], symbols: Symbols[A]) {
   import cats.syntax.eq._
@@ -108,13 +75,20 @@ case class Board[A: Show: Eq](positions: Map[Position, A], symbols: Symbols[A]) 
     def show(): String =
       Show[Board[A]](showBoard).show(this)
 
-    def move[F[_]: Sync](position: Position, symbol: A): F[Board[A]] = {
+    def move[F[_]: Sync](position: Position, player: Player): F[Board[A]] = {
       import cats.syntax.eq._
+      import cats.syntax.functor._
+      import cats.syntax.flatMap._
 
-      if (positions.get(position).map(_ === symbols.empty).getOrElse(false))
-        Sync[F].pure(this.copy(positions = this.positions + (position -> symbol)))
-      else
-        Sync[F].raiseError(InvalidMove)
+      for {
+        symbol <- symbols.playerSymbols.get(player) match {
+                    case None => Sync[F].raiseError(PlayerHasNoSymbol)
+                    case Some(value) => Sync[F].pure(value)
+                  }
+        empty = positions.get(position).map(_ === symbols.empty).getOrElse(false)
+        newBoard <- if (empty) Sync[F].pure(this.copy(positions = this.positions + (position -> symbol)))
+                    else Sync[F].raiseError(InvalidMove(this, player))
+      } yield newBoard
     }
 
     def validPositions: List[Position] =
@@ -138,6 +112,7 @@ case object Game {
 
   import cats.syntax.flatMap._
   import cats.syntax.functor._
+  import cats.syntax.applicativeError._
 
   // TODO: raiseError and handleErrorWith?
   def readPosition[F[_]: Sync](): F[Position] =
@@ -154,19 +129,20 @@ case object Game {
                   }
     } yield position
 
-  //TODO: handleErrorWith
   //TODO: Handle exiting
   def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
       for {
         position <- readPosition[F]()
-        newBoard <- board.move(position, board.symbols.user)
+        newBoard <- board.move(position, Human).handleErrorWith {
+                      case InvalidMove(_, _) => humanAction[F, A](board)
+                    }
       } yield newBoard
 
   // TODO: check if can win else pick empty non game terminating place else defeat
   def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
     for {
       _        <- Sync[F].delay(println("Cpu move"))
-      newBoard <- board.move(board.validPositions.head, board.symbols.cpu)
+      newBoard <- board.move(board.validPositions.head, Cpu)
     } yield newBoard
 
   // How can this be so ugly?
