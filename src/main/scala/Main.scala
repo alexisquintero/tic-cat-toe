@@ -13,7 +13,6 @@ object Main extends IOApp {
   val initialPlayer: Player = Human
   val initialBoard: Board[Char] = Board(symbols)
 
-  // TODO: PlayerIsCoward not patternMatching
   def errorHandling[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Unit] = {
     import cats.syntax.functor._
     import cats.syntax.flatMap._
@@ -182,7 +181,7 @@ case object Game {
                       else gameLoop(newBoard, changePlayer(player))
       } yield ()
 
-    game.handleErrorWith {
+    game.recoverWith {
       case InvalidMove =>
         for {
           _ <- Sync[F].delay(println("Invalid move"))
