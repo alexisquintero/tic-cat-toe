@@ -67,20 +67,20 @@ case object Game {
   import cats.syntax.functor._
   import cats.syntax.applicativeError._
 
-  def checkCoward[F[_]: Sync, S: Eq](input: S, endValue: S): F[Unit] = {
+  private def checkCoward[F[_]: Sync, S: Eq](input: S, endValue: S): F[Unit] = {
     import cats.syntax.eq._
 
     if (input === endValue) Sync[F].raiseError(PlayerIsCoward)
     else Sync[F].unit
   }
 
-  def inputToPosition[F[_]: Sync](input: String): F[Position] =
+  private def inputToPosition[F[_]: Sync](input: String): F[Position] =
       Position.fromString(input) match {
         case None => Sync[F].raiseError(InvalidMove)
         case Some(position) => Sync[F].pure(position)
       }
 
-  def readPosition[F[_]: Sync](): F[Position] = {
+  private def readPosition[F[_]: Sync](): F[Position] = {
     import cats.syntax.apply._
     import cats.instances.string.catsKernelStdOrderForString
 
@@ -91,21 +91,21 @@ case object Game {
     } yield position
   }
 
-  def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
+  private def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
       for {
         position <- readPosition[F]()
         newBoard <- board.move(position, Human)
       } yield newBoard
 
   // TODO: check if can win else pick empty non game terminating place else defeat
-  def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
+  private def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
     for {
       _        <- Sync[F].delay(println("Cpu move"))
       newBoard <- board.move(board.validPositions.head, Cpu)
     } yield newBoard
 
   // How can this be so ugly?
-  def endCondition[A: Eq](board: Board[A]): Boolean = {
+  private def endCondition[A: Eq](board: Board[A]): Boolean = {
     import cats.instances.int.catsKernelStdOrderForInt
     import cats.syntax.eq._
 
@@ -115,19 +115,19 @@ case object Game {
     nonEmptyPathSize.exists(_ === 1)
   }
 
-  def moveLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Board[A]] =
+  private def moveLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Board[A]] =
     player match {
       case Human => Game.humanAction[F, A](board)
       case Cpu   => Game.cpuAction[F, A](board)
     }
 
-  def changePlayer(player: Player): Player =
+  private def changePlayer(player: Player): Player =
     player match {
       case Cpu   => Human
       case Human => Cpu
     }
 
-  def showWinner[F[_]: Sync, A](board: Board[A], player: Player): F[Unit] =
+  private def showWinner[F[_]: Sync, A](board: Board[A], player: Player): F[Unit] =
     for {
       _ <- Sync[F].delay(println(s"Winner: ${player.toString}"))
       _ <- Sync[F].delay(println(board.show))
