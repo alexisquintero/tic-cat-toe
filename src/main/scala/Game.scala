@@ -1,6 +1,7 @@
 package Game
 
 import cats.{ Show, Eq }
+import cats.data.NonEmptyList
 
 import cats.effect.Sync
 
@@ -49,8 +50,12 @@ case class Board[A: Show: Eq](positions: Map[Position, A], symbols: Symbols[A]) 
       } yield newBoard
     }
 
-    def validPositions: List[Position] =
-      positions.filter(_._2 === symbols.empty).keys.toList
+    def validPositions[F[_]: Sync](): F[NonEmptyList[Position]] = {
+      NonEmptyList.fromList(positions.filter(_._2 === symbols.empty).keys.toList) match {
+        case None => Sync[F].raiseError(EmptyValidMoves)
+        case Some(value) => Sync[F].pure(value)
+      }
+    }
 }
 
 case object Board {
@@ -93,6 +98,7 @@ case object Game {
 
   private def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
       for {
+        _        <- board.validPositions[F]
         position <- readPosition[F]()
         newBoard <- board.move(position, Human)
       } yield newBoard
@@ -101,7 +107,8 @@ case object Game {
   private def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
     for {
       _        <- Sync[F].delay(println("Cpu move"))
-      newBoard <- board.move(board.validPositions.head, Cpu)
+      validPositions <- board.validPositions[F]
+      newBoard <- board.move(validPositions.head, Cpu)
     } yield newBoard
 
   // How can this be so ugly?

@@ -8,3 +8,5 @@ case object InvalidMove extends BoardError
 
 case object PlayerHasNoSymbol extends FatalError
 case object PlayerIsCoward    extends FatalError
+case object CpuIsCoward       extends FatalError
+case object EmptyValidMoves   extends FatalError
