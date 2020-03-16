@@ -6,6 +6,7 @@ import Positions._
 import Errors._
 import Domain._
 import Game._
+import Board._
 
 object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
