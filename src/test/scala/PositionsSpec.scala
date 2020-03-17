@@ -24,10 +24,11 @@ case class PositionsSpec() extends AnyFlatSpec with Checkers with Matchers {
   "fromString" should "return none with invalid Positions" in {
     check {
       val validPositions: List[String] = Position.allPositions.map(_.toString)
+      val nonValidPositions =
+        Gen.alphaStr suchThat (position => validPositions.exists(_ != position))
 
-      forAll { position: String =>
-        (! validPositions.exists(_ == position)) ==>
-          (Position.fromString(position.toString.toLowerCase) == none)
+      forAll(nonValidPositions) { position =>
+        (Position.fromString(position.toString.toLowerCase) == none)
       }
     }
   }
