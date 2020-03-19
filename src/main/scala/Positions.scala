@@ -1,6 +1,6 @@
 package Positions
 
-trait Position
+sealed trait Position
 
 object Position {
   import cats.syntax.option._
