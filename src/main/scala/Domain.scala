@@ -8,7 +8,7 @@ case class Symbols[A](human: A, cpu: A, empty: A) {
     }
 }
 
-trait Player
+sealed trait Player
 
 case object Human extends Player
 case object Cpu   extends Player
