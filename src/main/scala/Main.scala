@@ -24,9 +24,7 @@ object Main extends IOApp {
     for {
       _ <- Sync[F].delay(println(s"Posible positions: ${Position.showAllPositions}"))
       _ <- Game.gameLoop[F, A](board, player).handleErrorWith {
-             case PlayerHasNoSymbol => Sync[F].pure(println(PlayerHasNoSymbol.toString))
              case PlayerIsCoward    => Sync[F].pure(println(PlayerIsCoward.toString))
-             case CpuIsCoward       => Sync[F].pure(println(CpuIsCoward.toString))
              case EmptyValidMoves   => Sync[F].pure(println(EmptyValidMoves.toString))
              case e => Sync[F].delay(println(s"Catastrophic failure: $e"))
            }

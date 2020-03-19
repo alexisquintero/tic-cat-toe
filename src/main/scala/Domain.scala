@@ -1,10 +1,11 @@
 package Domain
 
-case class Symbols[A](playerSymbols: Map[Player, A], empty: A)
-
-object Symbols {
-  def apply[A](user: A, cpu: A, empty: A): Symbols[A] =
-    Symbols(Map[Player, A](Human -> user, Cpu -> cpu), empty)
+case class Symbols[A](human: A, cpu: A, empty: A) {
+  def playerSymbol(player: Player): A =
+    player match {
+      case Human => human
+      case Cpu   => cpu
+    }
 }
 
 trait Player

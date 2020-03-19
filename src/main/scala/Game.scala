@@ -16,20 +16,20 @@ case object Game {
   import cats.syntax.functor._
   import cats.syntax.applicativeError._
 
-  private def checkCoward[F[_]: Sync, S: Eq](input: S, endValue: S): F[Unit] = {
+  def checkCoward[F[_]: Sync, S: Eq](input: S, endValue: S): F[Unit] = {
     import cats.syntax.eq._
 
     if (input === endValue) Sync[F].raiseError(PlayerIsCoward)
     else Sync[F].unit
   }
 
-  private def inputToPosition[F[_]: Sync](input: String): F[Position] =
+  def inputToPosition[F[_]: Sync](input: String): F[Position] =
       Position.fromString(input) match {
         case None => Sync[F].raiseError(InvalidMove)
         case Some(position) => Sync[F].pure(position)
       }
 
-  private def readPosition[F[_]: Sync](): F[Position] = {
+  def readPosition[F[_]: Sync](): F[Position] = {
     import cats.syntax.apply._
     import cats.instances.string.catsKernelStdOrderForString
 
@@ -40,7 +40,7 @@ case object Game {
     } yield position
   }
 
-  private def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
+  def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
       for {
         _        <- board.validPositions[F]
         position <- readPosition[F]()
@@ -48,7 +48,7 @@ case object Game {
       } yield newBoard
 
   // TODO: check if can win else pick empty non game terminating place else defeat
-  private def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
+  def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
     for {
       _        <- Sync[F].delay(println("Cpu move"))
       validPositions <- board.validPositions[F]
@@ -56,29 +56,29 @@ case object Game {
     } yield newBoard
 
   // How can this be so ugly?
-  private def endCondition[A: Eq](board: Board[A]): Boolean = {
+  def endCondition[A: Eq](board: Board[A]): Boolean = {
     import cats.instances.int.catsKernelStdOrderForInt
     import cats.syntax.eq._
 
-    val pathVals: List[List[Option[A]]] = Position.allPaths.map(path => path.map(board.positions.get))
-    val pathSet: List[Set[A]] = pathVals.map(pathVal => pathVal.flatten.toSet)
+    val pathVals: List[List[A]] = Position.allPaths.map(path => path.map(board.get))
+    val pathSet: List[Set[A]] = pathVals.map(pathVal => pathVal.toSet)
     val nonEmptyPathSize: List[Int] = pathSet.filter(_.exists(_ =!= board.symbols.empty)).map(_.size)
     nonEmptyPathSize.exists(_ === 1)
   }
 
-  private def moveLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Board[A]] =
+  def moveLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Board[A]] =
     player match {
       case Human => Game.humanAction[F, A](board)
       case Cpu   => Game.cpuAction[F, A](board)
     }
 
-  private def changePlayer(player: Player): Player =
+  def changePlayer(player: Player): Player =
     player match {
       case Cpu   => Human
       case Human => Cpu
     }
 
-  private def showWinner[F[_]: Sync, A](board: Board[A], player: Player): F[Unit] =
+  def showWinner[F[_]: Sync, A](board: Board[A], player: Player): F[Unit] =
     for {
       _ <- Sync[F].delay(println(s"Winner: ${player.toString}"))
       _ <- Sync[F].delay(println(board.show))

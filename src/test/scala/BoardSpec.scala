@@ -21,8 +21,7 @@ case class BoardSpec() extends AnyFlatSpec with Checkers with Matchers {
       human <- gen
       cpu   <- gen
       empty <- gen
-      players = Map[Player, A](Human -> human, Cpu -> cpu)
-      symbols = Symbols(players, empty)
+      symbols = Symbols(human, cpu, empty)
       if (human != cpu) && (human != empty) && (cpu != empty)
     } yield Board[A](symbols)
 
