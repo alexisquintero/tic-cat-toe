@@ -95,11 +95,14 @@ case object Game {
       } yield ()
 
     game.recoverWith {
-      case InvalidMove =>
-        for {
-          _ <- Sync[F].delay(println("Invalid move"))
-          _ <- gameLoop(board, player)
-        } yield ()
+      case error: BoardError =>
+        error match {
+          case InvalidMove =>
+            for {
+              _ <- Sync[F].delay(println("Invalid move"))
+              _ <- gameLoop(board, player)
+            } yield ()
+        }
     }
   }
 }

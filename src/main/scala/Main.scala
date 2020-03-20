@@ -24,8 +24,11 @@ object Main extends IOApp {
     for {
       _ <- Sync[F].delay(println(s"Posible positions: ${Position.showAllPositions}"))
       _ <- Game.gameLoop[F, A](board, player).handleErrorWith {
-             case PlayerIsCoward    => Sync[F].pure(println(PlayerIsCoward.toString))
-             case EmptyValidMoves   => Sync[F].pure(println(EmptyValidMoves.toString))
+             case error: FatalError =>
+               error match {
+                 case PlayerIsCoward    => Sync[F].pure(println(PlayerIsCoward.toString))
+                 case EmptyValidMoves   => Sync[F].pure(println(EmptyValidMoves.toString))
+               }
              case e => Sync[F].delay(println(s"Catastrophic failure: $e"))
            }
     } yield ()

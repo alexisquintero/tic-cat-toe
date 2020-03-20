@@ -1,8 +1,8 @@
 package Errors
 
-trait Error extends Throwable
-trait FatalError extends Error
-trait BoardError extends Error
+sealed trait Error extends Throwable
+sealed trait FatalError extends Error
+sealed trait BoardError extends Error
 
 case object InvalidMove extends BoardError
 
