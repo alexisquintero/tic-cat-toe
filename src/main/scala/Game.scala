@@ -47,12 +47,19 @@ case object Game {
         newBoard <- board.move(position, Human)
       } yield newBoard
 
-  // TODO: check if can win else pick empty non game terminating place else defeat
+  // TODO: pick random from available moves, stop enemy from winning
   def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
     for {
-      _        <- Sync[F].delay(println("Cpu move"))
+      _              <- Sync[F].delay(println("Cpu move"))
       validPositions <- board.validPositions[F]
-      newBoard <- board.move(validPositions.head, Cpu)
+      nextBoards     <- validPositions
+                          .traverse[F, (Board[A], Boolean)](position => board.move(position, Cpu)
+                          .map(board => (board, endCondition(board))))
+      (win, cont)    = nextBoards.toList.partition(_._2)
+      newBoard       = win.headOption match {
+                         case Some(value) => value._1
+                         case None => cont.head._1
+                       }
     } yield newBoard
 
   // How can this be so ugly?
