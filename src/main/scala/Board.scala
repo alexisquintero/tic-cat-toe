@@ -72,7 +72,7 @@ case class Board[A: Show: Eq](
       Show[Board[A]](showBoard).show(this)
 
     def move[F[_]: Sync](position: Position, player: Player): F[Board[A]] =
-        if (get(position) == symbols.empty) Sync[F].pure(updateBoard(position, player))
+        if (get(position) == symbols.empty) Sync[F].delay(updateBoard(position, player))
         else Sync[F].raiseError(InvalidMove)
 
     def validPositions[F[_]: Sync](): F[NonEmptyList[Position]] =

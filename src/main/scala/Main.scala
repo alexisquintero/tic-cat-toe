@@ -26,8 +26,8 @@ object Main extends IOApp {
       _ <- Game.gameLoop[F, A](board, player).handleErrorWith {
              case error: FatalError =>
                error match {
-                 case PlayerIsCoward    => Sync[F].pure(println(PlayerIsCoward.toString))
-                 case EmptyValidMoves   => Sync[F].pure(println(EmptyValidMoves.toString))
+                 case PlayerIsCoward    => Sync[F].delay(println(PlayerIsCoward.toString))
+                 case EmptyValidMoves   => Sync[F].delay(println(EmptyValidMoves.toString))
                }
              case e => Sync[F].delay(println(s"Catastrophic failure: $e"))
            }
