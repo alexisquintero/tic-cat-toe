@@ -1,6 +1,7 @@
 package Game
 
 import cats.Eq
+import cats.data.{ WriterT, NonEmptyChain }
 
 import cats.effect.Sync
 
@@ -40,12 +41,15 @@ case object Game {
     } yield position
   }
 
-  def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] =
+  def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] = {
       for {
         _        <- board.validPositions[F]
         position <- readPosition[F]()
         newBoard <- board.move(position, Human)
       } yield newBoard
+  }.recoverWith {
+    case InvalidMove => Sync[F].delay(println("Invalid move")) >> humanAction(board)
+  }
 
   // TODO: pick random from available moves, stop enemy from winning
   def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
@@ -73,11 +77,13 @@ case object Game {
     nonEmptyPathSize.exists(_ === 1)
   }
 
-  def moveLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Board[A]] =
+  def moveLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Board[A]] = {
+    Sync[F].pure(println(board.show))
     player match {
       case Human => Game.humanAction[F, A](board)
       case Cpu   => Game.cpuAction[F, A](board)
     }
+  }
 
   def changePlayer(player: Player): Player =
     player match {
@@ -92,24 +98,19 @@ case object Game {
     } yield ()
 
   def gameLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Unit] = {
-    val game: F[Unit] =
-      for {
-        _          <- Sync[F].delay(println(board.show))
-        newBoard   <- moveLoop[F, A](board, player)
-        end        =  endCondition(newBoard)
-        _          <- if (end) showWinner[F, A](newBoard, player)
-                      else gameLoop(newBoard, changePlayer(player))
-      } yield ()
 
-    game.recoverWith {
-      case error: BoardError =>
-        error match {
-          case InvalidMove =>
-            for {
-              _ <- Sync[F].delay(println("Invalid move"))
-              _ <- gameLoop(board, player)
-            } yield ()
-        }
-    }
+    def gameWriter(board: Board[A], player: Player): WriterT[F, NonEmptyChain[Board[A]], Board[A]] =
+      for {
+        newBoard <- WriterT.putT(moveLoop(board, player))(NonEmptyChain.one(board))
+        end      =  endCondition(newBoard)
+        _        <- if (end) WriterT.tell(NonEmptyChain.one(newBoard))
+                    else gameWriter(newBoard, changePlayer(player))
+      } yield newBoard
+
+    for {
+      writer <- gameWriter(board, player).run
+      (log, newBoard) = writer
+      _ <- Sync[F].delay(log.map(board => print(board.show)))
+    } yield ()
   }
 }
