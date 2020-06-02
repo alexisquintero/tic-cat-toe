@@ -66,15 +66,14 @@ case object Game {
                        }
     } yield newBoard
 
-  // How can this be so ugly?
   def endCondition[A: Eq](board: Board[A]): Boolean = {
     import cats.instances.int.catsKernelStdOrderForInt
     import cats.syntax.eq._
 
-    val pathVals: List[List[A]] = Position.allPaths.map(path => path.map(board.get))
-    val pathSet: List[Set[A]] = pathVals.map(pathVal => pathVal.toSet)
-    val nonEmptyPathSize: List[Int] = pathSet.filter(_.exists(_ =!= board.symbols.empty)).map(_.size)
-    nonEmptyPathSize.exists(_ === 1)
+    Position.allPaths
+      .map(_.map(board.get).toSet)
+      .filter(s => s.size === 1 && ! s.contains(board.symbols.empty))
+      .nonEmpty
   }
 
   def moveLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Board[A]] = {
