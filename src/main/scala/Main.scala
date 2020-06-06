@@ -7,29 +7,31 @@ import Errors._
 import Domain._
 import Game._
 import Board._
+import TypeClasses.{ Console, IntRandom }
 
 object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
   import cats.instances.char.catsKernelStdOrderForChar
+  import cats.instances.string.catsStdShowForString
 
   val symbols: Symbols[Char] = Symbols('x', 'o', ' ')
   val initialPlayer: Player = Human
   val initialBoard: Board[Char] = Board(symbols)
 
-  def errorHandling[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Unit] = {
+  def errorHandling[F[_]: Sync: Console: IntRandom, A: Eq](board: Board[A], player: Player): F[Unit] = {
     import cats.syntax.functor._
     import cats.syntax.flatMap._
     import cats.syntax.applicativeError._
 
     for {
-      _ <- Sync[F].delay(println(s"Posible positions: ${Position.showAllPositions}"))
+      _ <- Console[F].putStrLn(s"Posible positions: ${Position.showAllPositions}")
       _ <- Game.gameLoop[F, A](board, player).handleErrorWith {
              case error: FatalError =>
                error match {
-                 case PlayerIsCoward    => Sync[F].delay(println(PlayerIsCoward.toString))
-                 case EmptyValidMoves   => Sync[F].delay(println(EmptyValidMoves.toString))
+                 case PlayerIsCoward    => Console[F].putStrLn(PlayerIsCoward.toString)
+                 case EmptyValidMoves   => Console[F].putStrLn(EmptyValidMoves.toString)
                }
-             case e => Sync[F].delay(println(s"Catastrophic failure: $e"))
+             case e => Console[F].putStrLn(s"Catastrophic failure: $e")
            }
     } yield ()
   }

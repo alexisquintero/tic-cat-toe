@@ -9,13 +9,14 @@ import Domain._
 import Positions._
 import Errors._
 import Board._
+import TypeClasses.{ Console, IntRandom }
 
 case object Game {
-  import scala.io.StdIn
-
   import cats.syntax.flatMap._
   import cats.syntax.functor._
   import cats.syntax.applicativeError._
+
+  import cats.instances.string.catsStdShowForString
 
   def checkCoward[F[_]: Sync, S: Eq](input: S, endValue: S): F[Unit] = {
     import cats.syntax.eq._
@@ -30,39 +31,39 @@ case object Game {
         case Some(position) => Sync[F].pure(position)
       }
 
-  def readPosition[F[_]: Sync](): F[Position] = {
+  def readPosition[F[_]: Sync: Console](): F[Position] = {
     import cats.syntax.apply._
     import cats.instances.string.catsKernelStdOrderForString
 
     for {
-      _        <- Sync[F].delay(print("Your move: "))
-      input    <- Sync[F].delay(StdIn.readLine.toLowerCase)
+      _        <- Console[F].putStr("Your move: ")
+      input    <- Console[F].readLn.map(_.toLowerCase)
       position <- checkCoward(input, "exit") *> inputToPosition(input)
     } yield position
   }
 
-  def humanAction[F[_]: Sync, A](board: Board[A]): F[Board[A]] = {
+  def humanAction[F[_]: Sync: Console, A](board: Board[A]): F[Board[A]] = {
       for {
         _        <- board.validPositions[F]
         position <- readPosition[F]()
         newBoard <- board.move(position, Human)
       } yield newBoard
   }.recoverWith {
-    case InvalidMove => Sync[F].delay(println("Invalid move")) >> humanAction(board)
+    case InvalidMove => Console[F].putStrLn("Invalid move") >> humanAction(board)
   }
 
-  // TODO: pick random from available moves, stop enemy from winning
-  def cpuAction[F[_]: Sync, A: Eq](board: Board[A]): F[Board[A]] =
+  def cpuAction[F[_]: Sync: Console: IntRandom, A: Eq](board: Board[A]): F[Board[A]] =
     for {
-      _              <- Sync[F].delay(println("Cpu move"))
+      _              <- Console[F].putStrLn("Cpu move")
       validPositions <- board.validPositions[F]
       nextBoards     <- validPositions
                           .traverse[F, (Board[A], Boolean)](position => board.move(position, Cpu)
                           .map(board => (board, endCondition(board))))
       (win, cont)    = nextBoards.toList.partition(_._2)
+      possibleBoard  <- implicitly[IntRandom[F]].next(cont.size)
       newBoard       = win.headOption match {
                          case Some(value) => value._1
-                         case None => cont.head._1
+                         case None => cont(possibleBoard)._1
                        }
     } yield newBoard
 
@@ -76,13 +77,14 @@ case object Game {
       .nonEmpty
   }
 
-  def moveLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Board[A]] = {
-    Sync[F].pure(println(board.show))
-    player match {
-      case Human => Game.humanAction[F, A](board)
-      case Cpu   => Game.cpuAction[F, A](board)
-    }
-  }
+  def moveLoop[F[_]: Sync: Console: IntRandom, A: Eq](board: Board[A], player: Player): F[Board[A]] =
+    for {
+      _ <- Console[F].putStrLn(board.show)
+      newBoard <- player match {
+        case Human => Game.humanAction[F, A](board)
+        case Cpu   => Game.cpuAction[F, A](board)
+      }
+    } yield newBoard
 
   def changePlayer(player: Player): Player =
     player match {
@@ -90,13 +92,14 @@ case object Game {
       case Human => Cpu
     }
 
-  def showWinner[F[_]: Sync, A](board: Board[A], player: Player): F[Unit] =
+  def showWinner[F[_]: Sync: Console, A](board: Board[A], player: Player): F[Unit] =
     for {
-      _ <- Sync[F].delay(println(s"Winner: ${player.toString}"))
-      _ <- Sync[F].delay(println(board.show))
+      _ <- Console[F].putStrLn(s"Winner: ${player.toString}")
+      _ <- Console[F].putStrLn(board.show)
     } yield ()
 
-  def gameLoop[F[_]: Sync, A: Eq](board: Board[A], player: Player): F[Unit] = {
+  def gameLoop[F[_]: Sync: Console: IntRandom, A: Eq](board: Board[A], player: Player): F[Unit] = {
+    import cats.syntax.traverse._
 
     def gameWriter(board: Board[A], player: Player): WriterT[F, NonEmptyChain[Board[A]], Board[A]] =
       for {
@@ -109,7 +112,7 @@ case object Game {
     for {
       writer <- gameWriter(board, player).run
       (log, newBoard) = writer
-      _ <- Sync[F].delay(log.map(board => print(board.show)))
+      _ <- log.traverse(l => Console[F].putStrLn(l.show))
     } yield ()
   }
 }
