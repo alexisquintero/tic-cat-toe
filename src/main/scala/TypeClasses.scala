@@ -1,6 +1,6 @@
 package TypeClasses
 
-import cats.effect.Sync
+import cats.effect.IO
 import cats.Show
 import cats.syntax.show._
 import scala.io.StdIn
@@ -13,17 +13,7 @@ sealed trait Console[F[_]] {
 }
 
 object Console {
-
   def apply[F[_]: Console]: Console[F] = implicitly[Console[F]]
-
-  implicit def syncConsole[F[_]: Sync]: Console[F] = new Console[F] {
-    def putStrLn[A: Show](a: A): F[Unit] =
-      Sync[F].delay(println(a.show))
-    def putStr[A: Show](a: A): F[Unit] =
-      Sync[F].delay(print(a.show))
-    def readLn(): F[String] =
-      Sync[F].delay(StdIn.readLine)
-  }
 }
 
 sealed trait Random[F[_], N] {
@@ -32,9 +22,20 @@ sealed trait Random[F[_], N] {
 
 trait IntRandom[F[_]] extends Random[F, Int]
 
-object IntRandom {
-  implicit def intRandom[F[_]: Sync]: IntRandom[F] = new IntRandom[F] {
-    def next(n: Int): F[Int] =
-      Sync[F].delay(UtilRandom.nextInt(n))
+object GameIO {
+
+  implicit val consoleIO: Console[IO] = new Console[IO] {
+    def putStrLn[A: Show](a: A): IO[Unit] =
+      IO.delay(println(a.show))
+    def putStr[A: Show](a: A): IO[Unit] =
+      IO.delay(print(a.show))
+    def readLn(): IO[String] =
+      IO.delay(StdIn.readLine)
   }
+
+  implicit val randomIntIO: IntRandom[IO] = new IntRandom[IO] {
+    def next(n: Int): IO[Int] =
+      IO.delay(UtilRandom.nextInt(n))
+  }
+
 }

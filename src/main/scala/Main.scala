@@ -8,6 +8,7 @@ import Domain._
 import Game._
 import Board._
 import TypeClasses.{ Console, IntRandom }
+import TypeClasses.GameIO._
 
 object Main extends IOApp {
   import cats.instances.char.catsStdShowForChar
